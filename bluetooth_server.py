@@ -1,45 +1,59 @@
-import sys
 import asyncio
 from bless import BlessServer, BlessGATTCharacteristic, GATTCharacteristicProperties, GATTAttributePermissions
 
-# Initialize server
-async def run_server():
-    server = BlessServer(name="MyBLEServer")
-    
-    # Define a service and characteristic UUID
-    service_uuid = "12345678-1234-5678-1234-56789abcdef0"
-    char_uuid = "12345678-1234-5678-1234-56789abcdef1"
-    
-    # Add service
-    await server.add_new_service(service_uuid)
-    
-    # Define characteristic properties and permissions
-    properties = GATTCharacteristicProperties.read | GATTCharacteristicProperties.write
-    permissions = GATTAttributePermissions.readable | GATTAttributePermissions.writeable
-    
-    # Add characteristic
-    await server.add_new_characteristic(
-        service_uuid, char_uuid, properties, None, permissions,
-        read_request_callback=read_request, write_request_callback=write_request
-    )
-    
-    # Start server
-    await server.start()
-    print("BLE Server is running...")
-    
-    # Run server indefinitely
-    await asyncio.Future()
+# Define your service and characteristic UUIDs
+service_uuid = "12345678-1234-5678-1234-56789abcdef0"
+char_uuid = "12345678-1234-5678-1234-56789abcdef1"
 
-def read_request(characteristic: BlessGATTCharacteristic, **kwargs):
-    """Callback function to handle read requests."""
-    print(f"Read request received: {characteristic.value}")
-    return characteristic.value
+# Define the BLE server
+class SimpleBleServer:
+    def __init__(self, loop):
+        # Create the server instance
+        self.server = BlessServer(name="TestBLEServer", loop=loop)
+        self.loop = loop
+        self.characteristic = None
 
-def write_request(characteristic: BlessGATTCharacteristic, value, **kwargs):
-    """Callback function to handle write requests."""
-    print(f"Write request received: {value}")
-    characteristic.value = value  # Echo back the value for demonstration
+    async def setup_ble(self):
+        # Add a new service
+        await self.server.add_new_service(service_uuid)
 
-if __name__ == "__main__":
+        # Define properties and permissions for the characteristic
+        char_properties = GATTCharacteristicProperties.read | GATTCharacteristicProperties.write
+        char_permissions = GATTAttributePermissions.readable | GATTAttributePermissions.writeable
+
+        # Add a new characteristic
+        self.characteristic = BlessGATTCharacteristic(
+            uuid=char_uuid,
+            properties=char_properties,
+            permissions=char_permissions,
+            value=[]
+        )
+        
+        # Attach the characteristic to the service
+        await self.server.add_new_characteristic(service_uuid, self.characteristic)
+        
+        # Define callbacks
+        self.characteristic.set_write_callback(self.on_write)
+        
+    async def start_server(self):
+        # Start advertising the BLE service
+        await self.server.start()
+        print("Server started and advertising...")
+        
+    def on_write(self, value, options):
+        # Handle write requests
+        message = bytes(value).decode('utf-8')
+        print(f"Received message: {message}")
+        # Optionally process the message and respond (echo back for simplicity)
+        return value  # Echo back the same message for confirmation
+
+# Run the server
+async def main():
     loop = asyncio.get_event_loop()
-    loop.run_until_complete(run_server())
+    ble_server = SimpleBleServer(loop)
+    await ble_server.setup_ble()
+    await ble_server.start_server()
+    await asyncio.Future()  # Run forever
+
+if __name__ == '__main__':
+    asyncio.run(main())
