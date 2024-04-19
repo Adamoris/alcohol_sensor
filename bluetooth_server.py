@@ -1,59 +1,99 @@
+"""
+Example for a BLE 4.0 Server using a GATT dictionary of services and
+characteristics
+"""
+import sys
+import logging
 import asyncio
-from bless import BlessServer, BlessGATTCharacteristic, GATTCharacteristicProperties, GATTAttributePermissions
+import threading
 
-# Define your service and characteristic UUIDs
-service_uuid = "12345678-1234-5678-1234-56789abcdef0"
-char_uuid = "12345678-1234-5678-1234-56789abcdef1"
+from typing import Any, Dict, Union
 
-# Define the BLE server
-class SimpleBleServer:
-    def __init__(self, loop):
-        # Create the server instance
-        self.server = BlessServer(name="TestBLEServer", loop=loop)
-        self.loop = loop
-        self.characteristic = None
+from bless import (  # type: ignore
+    BlessServer,
+    BlessGATTCharacteristic,
+    GATTCharacteristicProperties,
+    GATTAttributePermissions,
+)
 
-    async def setup_ble(self):
-        # Add a new service
-        await self.server.add_new_service(service_uuid)
+logging.basicConfig(level=logging.DEBUG)
+logger = logging.getLogger(name=__name__)
 
-        # Define properties and permissions for the characteristic
-        char_properties = GATTCharacteristicProperties.read | GATTCharacteristicProperties.write
-        char_permissions = GATTAttributePermissions.readable | GATTAttributePermissions.writeable
+trigger: Union[asyncio.Event, threading.Event]
+if sys.platform in ["darwin", "win32"]:
+    trigger = threading.Event()
+else:
+    trigger = asyncio.Event()
 
-        # Add a new characteristic
-        self.characteristic = BlessGATTCharacteristic(
-            uuid=char_uuid,
-            properties=char_properties,
-            permissions=char_permissions,
-            value=[]
-        )
-        
-        # Attach the characteristic to the service
-        await self.server.add_new_characteristic(service_uuid, self.characteristic)
-        
-        # Define callbacks
-        self.characteristic.set_write_callback(self.on_write)
-        
-    async def start_server(self):
-        # Start advertising the BLE service
-        await self.server.start()
-        print("Server started and advertising...")
-        
-    def on_write(self, value, options):
-        # Handle write requests
-        message = bytes(value).decode('utf-8')
-        print(f"Received message: {message}")
-        # Optionally process the message and respond (echo back for simplicity)
-        return value  # Echo back the same message for confirmation
 
-# Run the server
-async def main():
-    loop = asyncio.get_event_loop()
-    ble_server = SimpleBleServer(loop)
-    await ble_server.setup_ble()
-    await ble_server.start_server()
-    await asyncio.Future()  # Run forever
+def read_request(characteristic: BlessGATTCharacteristic, **kwargs) -> bytearray:
+    logger.debug(f"Reading {characteristic.value}")
+    return characteristic.value
 
-if __name__ == '__main__':
-    asyncio.run(main())
+
+def write_request(characteristic: BlessGATTCharacteristic, value: Any, **kwargs):
+    characteristic.value = value
+    logger.debug(f"Char value set to {characteristic.value}")
+    if characteristic.value == b"\x0f":
+        logger.debug("Nice")
+        trigger.set()
+
+
+async def run(loop):
+    trigger.clear()
+
+    # Instantiate the server
+    gatt: Dict = {
+        "A07498CA-AD5B-474E-940D-16F1FBE7E8CD": {
+            "51FF12BB-3ED8-46E5-B4F9-D64E2FEC021B": {
+                "Properties": (
+                    GATTCharacteristicProperties.read
+                    | GATTCharacteristicProperties.write
+                    | GATTCharacteristicProperties.indicate
+                ),
+                "Permissions": (
+                    GATTAttributePermissions.readable
+                    | GATTAttributePermissions.writeable
+                ),
+                "Value": None,
+            }
+        },
+        "5c339364-c7be-4f23-b666-a8ff73a6a86a": {
+            "bfc0c92f-317d-4ba9-976b-cc11ce77b4ca": {
+                "Properties": GATTCharacteristicProperties.read,
+                "Permissions": GATTAttributePermissions.readable,
+                "Value": bytearray(b"\x69"),
+            }
+        },
+    }
+    my_service_name = "Test Service"
+    server = BlessServer(name=my_service_name, loop=loop)
+    server.read_request_func = read_request
+    server.write_request_func = write_request
+
+    await server.add_gatt(gatt)
+    await server.start()
+    logger.debug(server.get_characteristic("51FF12BB-3ED8-46E5-B4F9-D64E2FEC021B"))
+    logger.debug("Advertising")
+    logger.info(
+        "Write '0xF' to the advertised characteristic: "
+        + "51FF12BB-3ED8-46E5-B4F9-D64E2FEC021B"
+    )
+    if trigger.__module__ == "threading":
+        trigger.wait()
+    else:
+        await trigger.wait()
+    await asyncio.sleep(2)
+    logger.debug("Updating")
+    server.get_characteristic("51FF12BB-3ED8-46E5-B4F9-D64E2FEC021B").value = bytearray(
+        b"i"
+    )
+    server.update_value(
+        "A07498CA-AD5B-474E-940D-16F1FBE7E8CD", "51FF12BB-3ED8-46E5-B4F9-D64E2FEC021B"
+    )
+    await asyncio.sleep(5)
+    await server.stop()
+
+
+loop = asyncio.get_event_loop()
+loop.run_until_complete(run(loop))
