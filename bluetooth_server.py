@@ -1,39 +1,45 @@
+import sys
 import asyncio
-from bleak import BleakServer
+from bless import BlessServer, BlessGATTCharacteristic, GATTCharacteristicProperties, GATTAttributePermissions
 
-# Define UUIDs for the service and a writable characteristic
-SERVICE_UUID = "12345678-1234-5678-1234-56789abcdef0"
-CHARACTERISTIC_UUID = "12345678-1234-5678-1234-56789abcdef1"
+# Initialize server
+async def run_server():
+    server = BlessServer(name="MyBLEServer")
+    
+    # Define a service and characteristic UUID
+    service_uuid = "12345678-1234-5678-1234-56789abcdef0"
+    char_uuid = "12345678-1234-5678-1234-56789abcdef1"
+    
+    # Add service
+    await server.add_new_service(service_uuid)
+    
+    # Define characteristic properties and permissions
+    properties = GATTCharacteristicProperties.read | GATTCharacteristicProperties.write
+    permissions = GATTAttributePermissions.readable | GATTAttributePermissions.writeable
+    
+    # Add characteristic
+    await server.add_new_characteristic(
+        service_uuid, char_uuid, properties, None, permissions,
+        read_request_callback=read_request, write_request_callback=write_request
+    )
+    
+    # Start server
+    await server.start()
+    print("BLE Server is running...")
+    
+    # Run server indefinitely
+    await asyncio.Future()
 
-def callback_handler(sender, data):
-    """
-    Handle data written to the characteristic
-    :param sender: the characteristic on which data was written
-    :param data: the data received (bytes)
-    """
-    received_string = data.decode('utf-8')
-    print(f"Received data: {received_string}")
-    # Here you can add code to process the received data and potentially send a response
-    return b"Received your message: " + data  # Echo back the received data for demonstration
+def read_request(characteristic: BlessGATTCharacteristic, **kwargs):
+    """Callback function to handle read requests."""
+    print(f"Read request received: {characteristic.value}")
+    return characteristic.value
 
-async def main():
-    async with BleakServer() as server:
-        # Add a service and a characteristic to the server
-        service = await server.add_new_service(SERVICE_UUID)
-        await service.add_new_characteristic(CHARACTERISTIC_UUID, ["write"], callback=callback_handler)
-        
-        print(f"Service UUID: {SERVICE_UUID}")
-        print(f"Characteristic UUID: {CHARACTERISTIC_UUID}")
-
-        # Start advertising the service
-        await server.start_advertising()
-
-        try:
-            while True:
-                await asyncio.sleep(1)  # Keep the server running
-        except KeyboardInterrupt:
-            await server.stop_advertising()
-            print("Server has stopped advertising.")
+def write_request(characteristic: BlessGATTCharacteristic, value, **kwargs):
+    """Callback function to handle write requests."""
+    print(f"Write request received: {value}")
+    characteristic.value = value  # Echo back the value for demonstration
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    loop = asyncio.get_event_loop()
+    loop.run_until_complete(run_server())
